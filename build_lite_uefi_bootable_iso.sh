@@ -2,6 +2,7 @@
 
 set -e
 
+UEFI_DISK_SIZE=$((2 * 1024 * 1024))  #this size should be larger than sum of kernel+initrd+rootdisk+customized-data
 OUT_ISO_NAME="$(basename $(pwd)).iso"
 
 SYSLINUX_SOURCE_URL='https://kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.03.tar.xz'
@@ -14,8 +15,18 @@ WORK_DIR=$PRJ_DIR/work
 ISOIMAGE=$PRJ_DIR/isoimage
 SYSLINUX_SRC_DIR=$SRC_DIR/syslinux
 SYSTEMD_BOOT_SRC_DIR=$SRC_DIR/systemd_boot
+SYSTEMD_BOOT_BIN_ZIP=$PRJ_DIR/prebuilt_binary/systemd-boot_26-May-2018.tar.xz
+SYSLINUX_BIN_ZIP=$PRJ_DIR/prebuilt_binary/syslinux-6.03.tar.xz
 
-[[ $1 == clean ]] && rm -rf $PRJ_DIR/src/*
+if [[ $1 == clean ]]; then
+  echo "removed all build files"
+  set +e
+  rm -rf $PRJ_DIR/src/*
+  rm -rf $PRJ_DIR/isoimage/*
+  umount $WORK_DIR/uefi.img 2>/dev/null
+  rm -f $WORK_DIR/uefi.img
+  exit 0
+fi
 
 mkdir -p $SRC_DIR/
 mkdir -p $WORK_DIR/
@@ -23,20 +34,32 @@ mkdir -p $ISOIMAGE/boot/syslinux
 
 if [[ ! -f $SYSTEMD_BOOT_SRC_DIR/uefi_root/EFI/BOOT/BOOTx64.EFI ]]; then
   cd $SRC_DIR
-  wget $SYSTEMD_BOOT_SOURCE_URL
+  if [[ -f $SYSTEMD_BOOT_BIN_ZIP ]]; then
+    cp $SYSTEMD_BOOT_BIN_ZIP ./
+  else
+    wget $SYSTEMD_BOOT_SOURCE_URL
+    exit 2
+  fi
+
   set +e 
   unxz systemd*.xz
-  tar xvf systemd*.tar
+  tar xf systemd*.tar
   find -maxdepth 1 -type d -name "systemd*" -exec ln -sfn {} systemd_boot \;
   set -e
 fi
 
 if [[ ! -f $SYSLINUX_SRC_DIR/bios/core/isolinux.bin ]]; then
   cd $SRC_DIR/
-  wget $SYSLINUX_SOURCE_URL
+  if [[ -f $SYSLINUX_BIN_ZIP ]]; then
+    cp $SYSLINUX_BIN_ZIP ./
+  else
+    wget $SYSLINUX_SOURCE_URL
+    exit 2
+  fi
+
   set +e 
   unxz syslinux*.xz
-  tar xvf syslinux*.tar
+  tar xf syslinux*.tar
   find -maxdepth 1 -type d -name "syslinux*" -exec ln -sfn {} syslinux \;
   set -e 
 fi
@@ -58,6 +81,7 @@ mount | grep uefi && sleep 3
 set -e
 
 image_size=$((10*1024*1024))
+image_size=$UEFI_DISK_SIZE
 truncate -s $image_size $WORK_DIR/uefi.img
 echo "[GEN] $WORK_DIR/uefi.img image_size=$image_size"
 LOOP_DEVICE_HDD=$(losetup -f)
@@ -99,11 +123,12 @@ EOF
 #ls -l $WORK_DIR/uefi/loader/entries
 
 
-echo ">>[COPY] customized data to uefi.img"
-rm -rf $WORK_DIR/uefi/data
+echo ">>[COPY] customized data ($WORK_DIR/uefi/data) to uefi.img"
+set +e
+rm -rf $WORK_DIR/uefi/data 2>/dev/null
 mkdir -p $WORK_DIR/uefi/data
-[[ -d $DATA_DIR ]] && cp -rf $DATA_DIR/* $WORK_DIR/uefi/data
-
+[[ -d $DATA_DIR ]] && cp -rf $DATA_DIR/* $WORK_DIR/uefi/data 2>/dev/null
+set -e
 
 df -h
 find $WORK_DIR/uefi/
